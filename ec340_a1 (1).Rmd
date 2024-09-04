@@ -1,0 +1,209 @@
+---
+title: "How can COVID-19 vaccination tweets help improve future vaccine uptake?"
+author: "Chisom Mgbedike"
+output: html_document
+bibliography: references.bib
+---
+
+
+
+## 1. Introduction
+
+Examining barriers to vaccine uptake is an established area of interest, particularly within the area of science communications. Studies have analysed how misinformation affects vaccine uptake across communities worldwide, including the use of social media by various organisations to promote vaccinations [@Steffens2020ut; @Wang2019td]. As @Steffens2020ut rightfully noted, social media is a powerful tool, but without effective use, organisations will not be able to reach their target audiences and convey the desired messages about vaccines. Building on the work of @Piedrahita-Valdes2021vi and @Hussain2021va, this essay will draw insights from vaccine-related text data using n-grams and topic modelling, in order to inform public campaigns on improving vaccine uptake in the future.
+
+
+
+## 2. Motivation
+As briefly mentioned in the introduction, text analysis is often utilised to obtain information on the public opinion of vaccines. For example, @Piedrahita-Valdes2021vi and @Hussain2021va conducted extensive sentiment analysis on vaccine-related tweets, both studies highlighting how misinformation can be damaging and increase resistance to vaccines, if public opinions are not closely monitored. These studies’ findings can be crucial to public campaigns to improve the perception of vaccines. It is not uncommon to see behavioural economics employed in such campaigns. In fact, as @Hursh2020ud identified, it is important to consider human behaviour in vaccine uptake, especially in cases where the vaccine development process may be a source of concern. What can further extend this analysis, if not provide a new perspective, is looking at closely related topics like this [@Hussain2021va, p.7]. With the COVID-19 pandemic accelerating vaccine development timelines, it is possible that perceptions of the organisations involved in the creation of vaccines have inhibited vaccine uptake. Often viewed as untrustworthy, large pharmaceutical companies are infamous for raising prices of frequently demanded drugs and medicines, using patent laws to their advantage and even failing to adequately publicise data on side effects [@Badcott2013]. Gathering insights to improve vaccine uptake and develop clear and effective public campaigns should include these companies where possible.
+
+```{r setup, include=FALSE}
+# loading and installing the relevant packages
+# install.packages("igraph","ggraph","stopwords")
+
+# for the project directory
+library(here)
+
+# for text (pre)processing, including tokenisation and topic modelling
+library(tidyverse)
+library(tidytext)
+library(text2vec)
+library(stopwords)
+
+# to create a different network map 
+library(igraph)
+library(ggraph)
+```
+
+```{r, include=FALSE}
+#loading the data itself
+all_tweets <- read_csv(here("vaccination_all_tweets.csv")) 
+```
+
+
+## 3. Overview of dataset
+
+The dataset was sourced from Kaggle, shared by @Preda21, who also mined and collated the data. To create this dataset, @Preda21 used a Python package called _tweepy_ to obtain access to Twitter's API and then used relevant terms to search data on all the vaccines. The vaccines included here are used globally, and are as follows:
+
+* Moderna;
+* Oxford/AstraZeneca;
+* Sinopharm;
+* Sinovac;
+* Pfizer/BioTech;
+* Sputnik V;
+* Covaxin.
+
+Though the data collection for vaccination-related tweets started on 14 February 2021 and now continues regularly, the earliest tweets in this version of the dataset were published on 12 December 2020 and the most recent tweets were published on 8 April 2021. Overall, there are 51,392 tweets present in the dataset. Aside from tweets, other metadata are present (the user name, user location, date of user creation, user description, number of followers, hashtags, number of retweets, whether the tweet is a retweet, an ID for the tweet, the number of favourites the tweet received, the tweet's publication date, the user's Twitter description, the number of users they follow, the total number of tweets they have favourited and the tweet's source e.g. _Twitter for iPhone_).
+
+
+
+
+## 4. Methodology
+
+### 4.1 Data preparation
+
+As with all text analysis, text preprocessing is required to adequately prepare the data for use. For ease of analysis, only tweets in English were retained, leaving 49,380 tweets for analysis. Since the focus is on the content of tweets and not on the location or other factors, only the tweet identifiers and the tweet columns were selected from the dataset. This produced the corpus, the collection of documents i.e., tweets, which were manipulated later in the analysis. For the main analysis, to be completed using topic modelling, a document-term matrix was created, by converting the tweets to lowercase, tokenising them and removing stop words in order to create the vocabulary. Only words that appeared a minimum of 10 times across the tweets and were present in, at most, 20% of the tweets were retained.
+
+```{r, results="hide"}
+#detecting language of all tweets, keeping only the tweets in English
+lang_all_tweets <- all_tweets %>% mutate(lang=cld2::detect_language(text))
+
+lang_all_tweets %>% count(lang) %>% arrange(desc(n))
+
+english_all_tweets <- lang_all_tweets %>% filter(lang == "en") %>% select(-lang)
+
+#dropping the columns that won't be used
+corpus_tweets <- english_all_tweets %>% select(id, text)
+
+
+#creating and cleaning the dtm for later use
+clean <- itoken(corpus_tweets$text, 
+             preprocessor = tolower, 
+             tokenizer = word_tokenizer, 
+             ids = corpus_tweets$id, 
+             progressbar = FALSE)
+
+eng_stopw <- get_stopwords(language = "en")
+
+vocab <- clean %>% 
+  create_vocabulary %>% 
+  prune_vocabulary(term_count_min = 10L, 
+                          doc_proportion_max = 0.2) %>%
+  anti_join(eng_stopw, by = c("term" = "word"))
+vectorizer <- vocab %>% vocab_vectorizer
+dtm <- create_dtm(clean, vectorizer, type = "dgTMatrix")
+
+
+```
+
+
+### 4.2 Initial predictions
+
+Prior to using topic modelling, initial predictions were made on what themes would be present in the tweets. Given that the focus was slightly broader than other studies, in the sense that other themes related to the vaccines were considered, including the vaccine providers, a network  map was the most appropriate choice. As tokenising the data results in the loss of context, the decision was made to use bigrams. Though only marginally better than using unigrams, the frequency with which two words appear together provides an indication on how the tweets will be assigned to different topics. The most common paired words, that is, appearing over 290 times across the tweets, are present in this map. The darker arrows indicate the paired words that appear the most e.g. _side effects_.
+
+With this map, predictions were created on what topics may arise from the topic modelling and they are as follows:
+
+1. Vaccine providers/creators
+2. Receiving the vaccine
+3. Efficacy/dose of the vaccine
+
+Though the predictions may seem quite general, as previously mentioned, the topics that appear most frequently may indicate areas that campaigns should cover in greater detail.
+
+
+```{r, results="hide"}
+
+#creating the bigrams
+tweets_bigrams <- corpus_tweets %>% 
+  unnest_tokens(bigrams, 
+                text,
+                token = "ngrams",
+                n = 2
+                )
+
+#cleaning the bigrams
+sep_tweets_bigrams <- tweets_bigrams %>%
+  separate(bigrams, c("word1", 
+                      "word2"),
+           sep = " ") %>%
+  filter(!str_detect(word1, "http")) %>%
+  filter(!str_detect(word2, "http")) %>%
+  filter(!str_detect(word1, "t.co")) %>% 
+  filter(!str_detect(word2, "t.co")) %>% 
+           anti_join(eng_stopw, by = c("word1" = "word")) %>%
+  count(word1, word2, sort = TRUE)
+```
+
+```{r}
+#plot network graph
+b <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+sep_tweets_bigrams %>%
+  filter(n >= 290) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") + 
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, 
+                 arrow = b, end_cap = circle(.07, "inches")) +
+  geom_node_point(color = "darkslategray4", size = 3) +
+        geom_node_text(aes(label = name), vjust = 1.8, size = 3) +
+        labs(title = "Vaccination-related tweets: 2020-2021",
+             subtitle = "Commonly Paired Words",
+             x = "", y = "") +
+        theme_void()
+
+```
+
+NB: Network map code adapted from @silge2017text
+
+### 4.3 Topic modelling
+
+Topic modelling was selected, specifically using Latent Dirichlet Allocation (LDA), given its relevance. By all accounts, it is expected that vaccination-related tweets would mostly be centred on the vaccines themselves. But it is also plausible that when tweeting about vaccines, other topics might be mentioned. The network map used for the predictions supports this e.g., Russia and Trudeau (presumably, Canadian Prime Minister Justin Trudeau) were mentioned in the tweets. As the tweets would cover a range of topics, and since LDA relies on allocating topics to text, based on a given lexicon, it seemed to be the most appropriate method for this analysis. Depending on the number of topics specified in the model, characteristic words of each topic are generated. Though the output of LDA models is generally interpreted at the discretion of the researcher, clear topics can often be identified, which may identify areas of concern in public campaigns. For example, words related to side effects could be grouped together, which may indicate that individuals are concerned about side effects and care should be taken when communicating vaccine side effects in campaigns.
+
+```{r, eval=FALSE}
+
+#lda model
+lda_model = LDA$new(n_topics = 13, doc_topic_prior = 0.1, topic_word_prior = 0.01)
+doc_topic_distr <-
+  lda_model$fit_transform(x = dtm, n_iter = 1000,
+                          convergence_tol = 0.0001,
+                          n_check_convergence = 25,
+                          progressbar = FALSE)
+
+top_topic_groups <- lda_model$get_top_words(n = 10, topic_number = c(1,2,3,4,5,6,7,8,9,10,11,12,13), lambda = .3)
+
+
+#storing the output of top_topic_groups in a dataframe
+output2 <- top_topic_groups
+
+table_topics <- as.data.frame(output2) #transform matrix into a dataframe
+
+new_names <- c("Topic 1", "Topic 2", "Topic 3", "Topic 4", "Topic 5", "Topic 6", "Topic 7", "Topic 8", "Topic 9", "Topic 10", "Topic 11", "Topic 12", "Topic 13")
+
+names(table_topics) <- new_names
+
+table_topics <- tibble::rowid_to_column(table_topics, "Index")
+
+table_topics %>% write_csv(here("table_topics.csv"))
+```
+
+
+## 5. Discussion of results
+
+```{r, message = FALSE, warning = FALSE, echo=FALSE, results='asis'}
+#most common topics table
+common_topics <- read_csv(here("table_topics.csv"))
+knitr::kable(common_topics)
+
+```
+Relative to the initial predictions and after varying _K_, the number of topics, and coherence tolerance, the LDA model produced some defined topics. Topic 5 indicates there were tweets detailing people receiving their first doses and expressing gratitude to vaccinators, namely the NHS in the United Kingdom. Topic 11 demonstrates that Twitter users may have detailed their experiences after receiving the vaccine, including headaches and fevers. Both symptoms have been highlighted as part of global campaigns to improve knowledge on vaccine side effects, so this has clearly been effective. Themes related to efficacy and clinical trials for vaccine development by the providers can also be seen in Topics 4 and 9, which is consistent with the predictions. Providing more information on this area within future campaigns could be useful, especially given the current worry around accelerated timelines for vaccine development. Topic 1 is perhaps the most interesting result, as it mentions both 'blood clots' and the Oxford/AstraZeneca vaccine. As reported by @Vogel14, with multiple cases of blood clots publicised after receiving the Oxford/AstraZeneca vaccine and some countries opting to suspend use, concerns emerged rapidly and the model appears to have identified this. Though it has since been confirmed that the side effect is "very rare", it is clear that the communication of side effects and other vaccine-related concerns necessitates care, to avoid distrust and fear-mongering [@Mahasen1046]. Aside from Topic 8 which is mostly references to time, the other topics are a combination of themes, as opposed to having a dominant theme in each. This may be partially due to the tradeoff between clearly defined topics and the frequency of the words mentioned, as a result of changing the number of topics and specifying the frequency of the terms across the documents. 
+ 
+
+
+
+## 6. Conclusions
+
+Despite the limitations, this essay has provided evidence of how a broader view, that is, considering the perception of pharmaceutical companies, can provide useful insights for public campaigns to increase vaccine uptake. Twitter may not fully represent the general public worldwide, but it remains important to cater to the digital audience and consider how their posts can shape the creation of suitable campaigns. People can be wary of the side effects of vaccines, how they were developed and the companies behind them. It would be worthwhile to accommodate these concerns to reduce resistance to vaccines. To extend this analysis, the LDA model output could be observed over time and key vaccine updates highlighted in each country to identify the effectiveness of national campaigns. Though not possible within the scope of this essay, vaccine tweets can be explored further in this way to improve vaccine uptake.
+
+
+
+## 7. References
+
+
